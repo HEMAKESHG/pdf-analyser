@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Q&A Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- PDF.js library from Mozilla -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+        // Set the worker script path for pdf.js
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Simple spinner */
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Style for file input */
+        input[type="file"]::file-selector-button {
+            background-color: #4A90E2;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background-color: #357ABD;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-4xl">
+        
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-gray-900">Document Q&A Analyzer</h1>
+            <p class="mt-2 text-md text-gray-600">Upload a PDF, ask a question, and get an AI-powered answer.</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="bg-white p-6 rounded-xl shadow-lg">
+
+            <!-- Step 1: API Key Input -->
+            <div class="mb-6">
+                <label for="apiKey" class="block text-lg font-semibold text-gray-700 mb-2">Step 1: Enter Your Google API Key</label>
+                <p class="text-sm text-gray-500 mb-2">You can get a free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-600 hover:underline">Google AI Studio</a>.</p>
+                <input type="password" id="apiKey" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" placeholder="Enter your Google API key here">
+            </div>
+
+            <!-- Step 2: PDF Upload -->
+            <div class="mb-6">
+                <label for="pdfFile" class="block text-lg font-semibold text-gray-700 mb-2">Step 2: Upload a PDF Document</label>
+                <input type="file" id="pdfFile" accept=".pdf" class="w-full p-2 border border-gray-300 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+
+            <!-- Step 3: Question Input -->
+            <div class="mb-6">
+                <label for="question" class="block text-lg font-semibold text-gray-700 mb-2">Step 3: Ask a Question</label>
+                <input type="text" id="question" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" placeholder="e.g., 'What is the main conclusion?' or 'Summarize the key findings.'">
+            </div>
+
+            <!-- Submit Button -->
+            <div class="text-center">
+                <button id="analyzeButton" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-transform transform hover:scale-105">
+                    Get Answer
+                </button>
+            </div>
+
+            <!-- Answer Section -->
+            <div id="answerSection" class="mt-8 pt-6 border-t border-gray-200" style="display: none;">
+                <h2 class="text-2xl font-bold text-gray-800 mb-4">Answer</h2>
+                <div id="loadingSpinner" class="flex justify-center items-center" style="display: none;">
+                    <div class="spinner"></div>
+                    <p class="ml-4 text-gray-600">Analyzing and generating answer...</p>
+                </div>
+                <div id="answerOutput" class="p-4 bg-gray-50 rounded-lg text-gray-700 whitespace-pre-wrap"></div>
+                <div id="errorOutput" class="p-4 bg-red-100 text-red-700 rounded-lg" style="display: none;"></div>
+            </div>
+
+        </main>
+
+        <!-- Footer -->
+        <footer class="text-center mt-8 text-sm text-gray-500">
+            <p>Powered by the Google Gemini API & PDF.js</p>
+        </footer>
+    </div>
+
+    <script>
+        // DOM element references
+        const analyzeButton = document.getElementById('analyzeButton');
+        const apiKeyInput = document.getElementById('apiKey');
+        const pdfFileInput = document.getElementById('pdfFile');
+        const questionInput = document.getElementById('question');
+        const answerSection = document.getElementById('answerSection');
+        const answerOutput = document.getElementById('answerOutput');
+        const errorOutput = document.getElementById('errorOutput');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+
+        // Event listener for the analyze button
+        analyzeButton.addEventListener('click', handleAnalysis);
+
+        /**
+         * Main function to handle the analysis process when the button is clicked.
+         */
+        async function handleAnalysis() {
+            // 1. Get user inputs
+            const apiKey = apiKeyInput.value.trim();
+            const pdfFile = pdfFileInput.files[0];
+            const question = questionInput.value.trim();
+
+            // 2. Clear previous outputs and hide errors
+            resetUI();
+
+            // 3. Validate inputs
+            if (!apiKey || !pdfFile || !question) {
+                displayError("Please fill in all fields: API Key, PDF Document, and Question.");
+                return;
+            }
+            if (pdfFile.type !== 'application/pdf') {
+                displayError("Please upload a valid PDF file.");
+                return;
+            }
+
+            // 4. Show the answer section and loading spinner
+            answerSection.style.display = 'block';
+            loadingSpinner.style.display = 'flex';
+            loadingSpinner.querySelector('p').textContent = 'Reading PDF...';
+
+            try {
+                // 5. Extract text from the PDF file
+                const documentText = await extractTextFromPDF(pdfFile);
+                loadingSpinner.querySelector('p').textContent = 'Analyzing and generating answer...';
+
+                // 6. Construct the prompt for the Gemini API
+                const prompt = `Based on the following document, please provide a clear and concise answer to the question.
+
+Document:
+---
+${documentText}
+---
+
+Question: ${question}
+
+Answer:`;
+
+                // 7. Call the Gemini API
+                const generatedText = await callGeminiAPI(apiKey, prompt);
+
+                // 8. Display the result
+                displayAnswer(generatedText);
+
+            } catch (error) {
+                // 9. Handle any errors during the process
+                console.error("Error during analysis:", error);
+                displayError(`An error occurred: ${error.message}. Please check your API key and network connection.`);
+            } finally {
+                // 10. Hide the loading spinner regardless of outcome
+                loadingSpinner.style.display = 'none';
+            }
+        }
+        
+        /**
+         * Extracts all text from an uploaded PDF file using pdf.js.
+         * @param {File} file - The PDF file object from the input.
+         * @returns {Promise<string>} - A promise that resolves with the full text content of the PDF.
+         */
+        async function extractTextFromPDF(file) {
+            const fileReader = new FileReader();
+            
+            return new Promise((resolve, reject) => {
+                fileReader.onload = async function() {
+                    try {
+                        const typedarray = new Uint8Array(this.result);
+                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                        let fullText = '';
+
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            const pageText = textContent.items.map(item => item.str).join(' ');
+                            fullText += pageText + '\n\n'; // Add space between pages
+                        }
+                        resolve(fullText);
+                    } catch (error) {
+                        reject(new Error('Could not read the PDF file. It might be corrupted or protected.'));
+                    }
+                };
+                fileReader.onerror = () => {
+                    reject(new Error('Failed to read the file.'));
+                };
+                fileReader.readAsArrayBuffer(file);
+            });
+        }
+
+        /**
+         * Calls the Google Gemini API to generate content.
+         * @param {string} apiKey - The user's Google API key.
+         * @param {string} prompt - The fully constructed prompt to send to the model.
+         * @returns {Promise<string>} - The generated text from the API.
+         */
+        async function callGeminiAPI(apiKey, prompt) {
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+            const payload = { contents: [{ parts: [{ text: prompt }] }] };
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error.message || `HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                return data.candidates[0].content.parts[0].text;
+            } else {
+                throw new Error("Invalid response structure from API.");
+            }
+        }
+
+        /**
+         * Displays the generated answer in the UI.
+         * @param {string} text - The text to display.
+         */
+        function displayAnswer(text) {
+            answerOutput.textContent = text;
+            answerOutput.style.display = 'block';
+        }
+
+        /**
+         * Displays an error message in the UI.
+         * @param {string} message - The error message to display.
+         */
+        function displayError(message) {
+            errorOutput.textContent = message;
+            errorOutput.style.display = 'block';
+            answerSection.style.display = 'block';
+        }
+
+        /**
+         * Resets the UI by clearing previous answers and errors.
+         */
+        function resetUI() {
+            answerOutput.textContent = '';
+            answerOutput.style.display = 'none';
+            errorOutput.textContent = '';
+            errorOutput.style.display = 'none';
+            answerSection.style.display = 'none';
+        }
+    </script>
+
+</body>
+</html>
